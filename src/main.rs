@@ -1,6 +1,8 @@
 extern crate bytesize;
+extern crate base64;
+
 use bytesize::ByteSize;
-use std::io::BufRead;
+use std::io::{BufRead, Write};
 
 fn get_path_from_args() -> Result<String, &'static str> {
     // the 0th arg is always the program name so skip it
@@ -14,6 +16,9 @@ fn get_path_from_args() -> Result<String, &'static str> {
     Ok(args.remove(0))
 }
 
+// TODO: instead of copying all of the bytes to different in-memory buffers,
+// copy to one large in-memory buffer and just collect each file as a list of
+// pointers into the buffer + names
 struct Base64ImageFile {
     name: String,
     data: Vec<u8>
@@ -110,6 +115,28 @@ fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
     jpegs
 }
 
+fn decode_and_write_base64_file(filename: &str, data: &[u8]) {
+    let b64_decoded_bytes = match base64::decode(data) {
+        Err(why) => panic!("couldn't decode bytes, {:?}! {}", data, why),
+        Ok(decoded_bytes) => decoded_bytes,
+    };
+
+    let path = std::path::Path::new(filename);
+    let display = path.display();
+
+    // Open a file in write-only mode, returns `io::Result<File>`
+    let mut file = match std::fs::File::create(&path) {
+        Err(why) => panic!("couldn't create {}: {}", display, why),
+        Ok(file) => file,
+    };
+
+    // Write the `LOREM_IPSUM` string to `file`, returns `io::Result<()>`
+    match file.write_all(&b64_decoded_bytes) {
+        Err(why) => panic!("couldn't write to {}: {}", display, why),
+        Ok(_) => println!("successfully wrote to {}", display),
+    }
+}
+
 fn main() {
     let get_path_result: Result<String, &'static str> = get_path_from_args();
     if let Err(err_msg) = get_path_result {
@@ -127,5 +154,6 @@ fn main() {
     println!("Collected images:");
     for image in base64_encoded_images {
         println!("    {}\n    size: {}\n", image.name, ByteSize(image.data.len() as u64));
+        decode_and_write_base64_file(&image.name, &image.data);
     }
 }
