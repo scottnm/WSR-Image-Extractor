@@ -1,3 +1,5 @@
+extern crate bytesize;
+use bytesize::ByteSize;
 use std::io::BufRead;
 
 fn get_path_from_args() -> Result<String, &'static str> {
@@ -13,13 +15,13 @@ fn get_path_from_args() -> Result<String, &'static str> {
 }
 
 struct Base64ImageFile {
-    _name: String,
-    _data: Vec<u8>
+    name: String,
+    data: Vec<u8>
 }
 
 fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
     #[derive(Debug, Copy, Clone)]
-    enum ScanState {
+    enum ScanPhase {
         LookForJpeg,
         CheckBase64,
         LookForImageName,
@@ -27,52 +29,85 @@ fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
         ReadJpeg,
     }
 
-    let mut scan_state = ScanState::LookForJpeg;
-    let file = std::fs::File::open(file_path).unwrap();
+    #[derive(Debug)]
+    struct ScanState {
+        name: String,
+        data: Vec<u8>,
+        scan_phase: ScanPhase,
+    }
 
+    impl ScanState {
+        fn new() -> ScanState {
+            ScanState {
+                name: String::new(),
+                data: Vec::<u8>::new(),
+                scan_phase: ScanPhase::LookForJpeg,
+            }
+        }
+    }
+
+    let mut jpegs = Vec::<Base64ImageFile>::new();
+    let mut current_scan_state = ScanState::new();
+
+    let file = std::fs::File::open(file_path).unwrap();
     for line_it in std::io::BufReader::new(file).lines() {
         let line = line_it.unwrap();
-        match scan_state {
-            ScanState::LookForJpeg => {
+
+        match current_scan_state.scan_phase {
+            ScanPhase::LookForJpeg => {
                 if line == "Content-Type: image/jpeg" {
-                    scan_state = ScanState::CheckBase64;
+                    current_scan_state.scan_phase = ScanPhase::CheckBase64;
                 }
             },
-            ScanState::CheckBase64 => {
+
+            ScanPhase::CheckBase64 => {
                 if line == "Content-Transfer-Encoding: base64" {
-                    scan_state = ScanState::LookForImageName;
+                    current_scan_state.scan_phase = ScanPhase::LookForImageName;
                 } else {
-                    scan_state = ScanState::LookForJpeg;
                     println!("Skipping non-base64 image entry! {}", line);
+                    current_scan_state = ScanState::new();
                 }
-            }
-            ScanState::LookForImageName => {
+            },
+
+            ScanPhase::LookForImageName => {
                 const IMAGE_NAME_PREFIX: &'static str = "Content-Location: ";
                 if line.starts_with(IMAGE_NAME_PREFIX) {
                     let image_name = &line[IMAGE_NAME_PREFIX.len()..];
                     println!("image: {}", image_name);
-                    scan_state = ScanState::FindImageDataStart;
+                    current_scan_state.name = image_name.to_string();
+                    current_scan_state.scan_phase = ScanPhase::FindImageDataStart;
                 } else {
                     println!("Missing image name! {}", line);
-                    scan_state = ScanState::LookForJpeg;
+                    current_scan_state = ScanState::new();
                 }
             },
-            ScanState::FindImageDataStart => {
+
+            ScanPhase::FindImageDataStart => {
                 if line.is_empty() {
-                    scan_state = ScanState::ReadJpeg;
+                    current_scan_state.scan_phase = ScanPhase::ReadJpeg;
                 } else {
                     println!("Expected empty line! {}", line);
-                    scan_state = ScanState::LookForJpeg;
+                    current_scan_state = ScanState::new();
                 }
             },
-            ScanState::ReadJpeg => {
-                println!("    image data preview: {}", line);
-                scan_state = ScanState::LookForJpeg;
+
+            ScanPhase::ReadJpeg => {
+                if line.is_empty() { // we finished reading the jpeg data lines
+                    // consume the tmp scan state and reset it
+                    let completed_scan_state = std::mem::replace(&mut current_scan_state, ScanState::new());
+                    jpegs.push(Base64ImageFile { name: completed_scan_state.name, data: completed_scan_state.data });
+                } else {
+                    // we have found our first jpeg data line. Print a preview for debug purposes.
+                    if current_scan_state.data.is_empty() {
+                        println!("    image data preview: {}", line);
+                    }
+                    current_scan_state.data.extend(line.as_bytes());
+                }
             },
         };
     }
 
-    Vec::new()
+    jpegs
 }
 
 fn main() {
@@ -86,5 +121,11 @@ fn main() {
     let file_path = get_path_result.unwrap();
     println!("Got path! {}", file_path);
 
-    let _base64_encoded_images: Vec<Base64ImageFile> = extract_base64_encoded_jpegs(&file_path);
+    let base64_encoded_images: Vec<Base64ImageFile> = extract_base64_encoded_jpegs(&file_path);
+
+    // Print out the sizes of each image for debug purposes
+    println!("Collected images:");
+    for image in base64_encoded_images {
+        println!("    {}\n    size: {}\n", image.name, ByteSize(image.data.len() as u64));
+    }
 }
