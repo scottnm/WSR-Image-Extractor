@@ -1,5 +1,5 @@
-extern crate bytesize;
 extern crate base64;
+extern crate bytesize;
 
 use bytesize::ByteSize;
 use std::io::{BufRead, Write};
@@ -41,7 +41,11 @@ fn get_run_options_from_args() -> Result<RunOptions, &'static str> {
     assert!(args.is_empty()); // should have consumed all arguments
 
     // the first argument should be the path
-    Ok(RunOptions { file_path, output_directory, is_preview })
+    Ok(RunOptions {
+        file_path,
+        output_directory,
+        is_preview,
+    })
 }
 
 // TODO: instead of copying all of the bytes to different in-memory buffers,
@@ -49,7 +53,7 @@ fn get_run_options_from_args() -> Result<RunOptions, &'static str> {
 // pointers into the buffer + names
 struct Base64ImageFile {
     name: String,
-    data: Vec<u8>
+    data: Vec<u8>,
 }
 
 fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
@@ -91,7 +95,7 @@ fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
                 if line == "Content-Type: image/jpeg" {
                     current_scan_state.scan_phase = ScanPhase::CheckBase64;
                 }
-            },
+            }
 
             ScanPhase::CheckBase64 => {
                 if line == "Content-Transfer-Encoding: base64" {
@@ -100,7 +104,7 @@ fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
                     println!("Skipping non-base64 image entry! {}", line);
                     current_scan_state = ScanState::new();
                 }
-            },
+            }
 
             ScanPhase::LookForImageName => {
                 const IMAGE_NAME_PREFIX: &'static str = "Content-Location: ";
@@ -112,7 +116,7 @@ fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
                     println!("Missing image name! {}", line);
                     current_scan_state = ScanState::new();
                 }
-            },
+            }
 
             ScanPhase::FindImageDataStart => {
                 if line.is_empty() {
@@ -121,17 +125,22 @@ fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
                     println!("Expected empty line! {}", line);
                     current_scan_state = ScanState::new();
                 }
-            },
+            }
 
             ScanPhase::ReadJpeg => {
-                if line.is_empty() { // we finished reading the jpeg data lines
+                if line.is_empty() {
+                    // we finished reading the jpeg data lines
                     // consume the tmp scan state and reset it
-                    let completed_scan_state = std::mem::replace(&mut current_scan_state, ScanState::new());
-                    jpegs.push(Base64ImageFile { name: completed_scan_state.name, data: completed_scan_state.data });
+                    let completed_scan_state =
+                        std::mem::replace(&mut current_scan_state, ScanState::new());
+                    jpegs.push(Base64ImageFile {
+                        name: completed_scan_state.name,
+                        data: completed_scan_state.data,
+                    });
                 } else {
                     current_scan_state.data.extend(line.as_bytes());
                 }
-            },
+            }
         };
     }
 
@@ -171,7 +180,8 @@ fn main() {
 
     println!("Run options: {:?}", run_options);
 
-    let base64_encoded_images: Vec<Base64ImageFile> = extract_base64_encoded_jpegs(&run_options.file_path);
+    let base64_encoded_images: Vec<Base64ImageFile> =
+        extract_base64_encoded_jpegs(&run_options.file_path);
 
     // Print out the sizes of each image for debug purposes
     let output_directory_path = std::path::Path::new(&run_options.output_directory);
@@ -179,7 +189,11 @@ fn main() {
         let full_image_path_buffer = output_directory_path.join(image.name);
         let full_image_path = full_image_path_buffer.as_path();
         if run_options.is_preview {
-            println!("    would write {}\n    size: {}\n", full_image_path.display(), ByteSize(image.data.len() as u64));
+            println!(
+                "    would write {}\n    size: {}\n",
+                full_image_path.display(),
+                ByteSize(image.data.len() as u64)
+            );
         } else {
             decode_and_write_base64_file(&full_image_path, &image.data);
         }
