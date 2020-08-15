@@ -4,16 +4,44 @@ extern crate base64;
 use bytesize::ByteSize;
 use std::io::{BufRead, Write};
 
-fn get_path_from_args() -> Result<String, &'static str> {
+#[derive(Debug)]
+struct RunOptions {
+    file_path: String,
+    output_directory: String,
+    is_preview: bool,
+}
+
+fn get_run_options_from_args() -> Result<RunOptions, &'static str> {
     // the 0th arg is always the program name so skip it
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // only need the first 3 args but the last one is optional
+    let mut args: Vec<String> = std::env::args().skip(1).take(3).collect();
+
+    match args.len() {
+        0 => return Err("missing input path argument"),
+        1 => return Err("missing output directory path argument"),
+        _ => (),
+    };
+
+    let is_preview: bool = if args.len() > 2 {
+        args.remove(2) == "--preview"
+    } else {
+        false
+    };
+
+    if args.len() <= 1 {
+        return Err("missing output directory path argument");
+    }
+    let output_directory = args.remove(1);
 
     if args.is_empty() {
-        return Err("missing path argument");
+        return Err("missing input path argument");
     }
+    let file_path = args.remove(0);
+
+    assert!(args.is_empty()); // should have consumed all arguments
 
     // the first argument should be the path
-    Ok(args.remove(0))
+    Ok(RunOptions { file_path, output_directory, is_preview })
 }
 
 // TODO: instead of copying all of the bytes to different in-memory buffers,
@@ -78,7 +106,6 @@ fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
                 const IMAGE_NAME_PREFIX: &'static str = "Content-Location: ";
                 if line.starts_with(IMAGE_NAME_PREFIX) {
                     let image_name = &line[IMAGE_NAME_PREFIX.len()..];
-                    println!("image: {}", image_name);
                     current_scan_state.name = image_name.to_string();
                     current_scan_state.scan_phase = ScanPhase::FindImageDataStart;
                 } else {
@@ -102,10 +129,6 @@ fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
                     let completed_scan_state = std::mem::replace(&mut current_scan_state, ScanState::new());
                     jpegs.push(Base64ImageFile { name: completed_scan_state.name, data: completed_scan_state.data });
                 } else {
-                    // we have found our first jpeg data line. Print a preview for debug purposes.
-                    if current_scan_state.data.is_empty() {
-                        println!("    image data preview: {}", line);
-                    }
                     current_scan_state.data.extend(line.as_bytes());
                 }
             },
@@ -115,17 +138,16 @@ fn extract_base64_encoded_jpegs(file_path: &str) -> Vec<Base64ImageFile> {
     jpegs
 }
 
-fn decode_and_write_base64_file(filename: &str, data: &[u8]) {
+fn decode_and_write_base64_file(file_path: &std::path::Path, data: &[u8]) {
     let b64_decoded_bytes = match base64::decode(data) {
         Err(why) => panic!("couldn't decode bytes, {:?}! {}", data, why),
         Ok(decoded_bytes) => decoded_bytes,
     };
 
-    let path = std::path::Path::new(filename);
-    let display = path.display();
+    let display = file_path.display();
 
     // Open a file in write-only mode, returns `io::Result<File>`
-    let mut file = match std::fs::File::create(&path) {
+    let mut file = match std::fs::File::create(&file_path) {
         Err(why) => panic!("couldn't create {}: {}", display, why),
         Ok(file) => file,
     };
@@ -138,22 +160,28 @@ fn decode_and_write_base64_file(filename: &str, data: &[u8]) {
 }
 
 fn main() {
-    let get_path_result: Result<String, &'static str> = get_path_from_args();
-    if let Err(err_msg) = get_path_result {
-        println!("Invalid arguments: {}", err_msg);
-        println!("Usage: wsr_image <path to file>");
-        std::process::exit(1);
-    }
+    let run_options = match get_run_options_from_args() {
+        Err(usage_err) => {
+            println!("Invalid arguments: {}", usage_err);
+            println!("Usage: wsr_image <path to file> <output directory> [--preview]");
+            return;
+        }
+        Ok(options) => options,
+    };
 
-    let file_path = get_path_result.unwrap();
-    println!("Got path! {}", file_path);
+    println!("Run options: {:?}", run_options);
 
-    let base64_encoded_images: Vec<Base64ImageFile> = extract_base64_encoded_jpegs(&file_path);
+    let base64_encoded_images: Vec<Base64ImageFile> = extract_base64_encoded_jpegs(&run_options.file_path);
 
     // Print out the sizes of each image for debug purposes
-    println!("Collected images:");
+    let output_directory_path = std::path::Path::new(&run_options.output_directory);
     for image in base64_encoded_images {
-        println!("    {}\n    size: {}\n", image.name, ByteSize(image.data.len() as u64));
-        decode_and_write_base64_file(&image.name, &image.data);
+        let full_image_path_buffer = output_directory_path.join(image.name);
+        let full_image_path = full_image_path_buffer.as_path();
+        if run_options.is_preview {
+            println!("    would write {}\n    size: {}\n", full_image_path.display(), ByteSize(image.data.len() as u64));
+        } else {
+            decode_and_write_base64_file(&full_image_path, &image.data);
+        }
     }
 }
