@@ -1,0 +1,33 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cppbuild",
+			"label": "MSVC C Build",
+			"command": "cl.exe",
+			"args": [
+				"/TC",
+				"/W4",
+				"/nologo",
+				"/permissive-",
+				"${workspaceFolder}\\src\\*.c",
+				"/Z7",
+				"/Fo:",
+				"${workspaceFolder}\\obj\\",
+				"/Fe:",
+				"${workspaceFolder}\\bin\\wsr.exe"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "compiler: cl.exe"
+		}
+	]
+}
